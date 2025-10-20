@@ -19,21 +19,21 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
-
+8020027521:AAHRypwd_Xx0AiyrDGfJJtEe8jhYcQ29wlQ
 # =================== 🛑 CONFIGURATION - REMPLISSEZ ICI DIRECTEMENT 🛑 ===================
 
 # 1. Votre Jeton (Token) Telegram Bot (ex: "123456:AABBCC...")
-TELEGRAM_TOKEN = "VOTRE_TOKEN_TELEGRAM_ICI" 
+TELEGRAM_TOKEN = "8020027521:AAHRypwd_Xx0AiyrDGfJJtEe8jhYcQ29wlQ" 
 
 # 2. Clé Secrète Paystack (sk_live_xxxx... - OBLIGATOIRE pour l'automatisation)
 PAYSTACK_SECRET_KEY = "VOTRE_CLE_SECRETE_PAYSTACK_ICI" 
 
 # 3. ID de votre groupe/chat admin (où vous recevez les notifications)
 # Doit commencer par -100 si c'est un groupe. (ex: -100123456789)
-GROUP_ID = int("-100VOTRE_ID_DE_GROUPE_ICI") 
+GROUP_ID = int("-4943478525") 
 
 # 4. ID des administrateurs exemptés de paiement (séparés par des virgules)
-ADMIN_IDS = "12345678, 98765432"
+ADMIN_IDS = "6357925694, 98765432"
 
 # 5. URL Publique de votre serveur (vous devez la connaître après le déploiement initial)
 # Exemple: "https://mon-bot-payant-xxxx.onrender.com"
@@ -42,11 +42,11 @@ EXTERNAL_URL = "VOTRE_URL_PUBLIQUE_DE_L_HEBERGEUR_ICI"
 # --- Liens et Prix ---
 
 # Lien du tutoriel à envoyer après paiement
-TUTORIAL_LINK = "https://lien-vers-votre-tutoriel.com/tiktok_fb" 
+TUTORIAL_LINK ="https://t.me/+TCuZJmqAUj85ZTM8" 
 # Lien support WhatsApp
-SUPPORT_LINK = "https://wa.me/votrenumero" 
+SUPPORT_LINK = "https://wa.me/0503651426" 
 # Prix (affichage et montant Paystack)
-PRICE_TIKTOK = "5000"
+PRICE_TIKTOK = "6000"
 PRICE_FACEBOOK = "8000"
 # Port d'écoute du serveur (souvent 5000 par défaut)
 PORT = 5000 
