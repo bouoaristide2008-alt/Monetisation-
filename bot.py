@@ -1,9 +1,9 @@
-# bot.py
-# Bot Monétisation — Français pur
-# Remplir : TELEGRAM_TOKEN, GROUP_ID, ADMIN_IDS, PAYSTACK_TIKTOK, PAYSTACK_FACEBOOK, TUTORIAL_LINK, SUPPORT_LINK
-
 import os
 import logging
+import json
+import requests
+import asyncio
+from flask import Flask, request, jsonify
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -20,21 +20,36 @@ from telegram.ext import (
     filters,
 )
 
-# =================== CONFIG - REMPLIS ICI (ou mets en vars d'env sur Render) ===================
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")      # TON TOKEN (ou variable d'env)
-GROUP_ID = int(os.getenv("GROUP_CHAT_ID", "0"))       # ID du groupe admin
-# Admins autorisés (exemptés du paiement) -> string CSV ou list d'ids ; exemple: "12345678,98765432"
-ADMIN_IDS = os.getenv("ADMIN_IDS", "")                # ex: "123456789,111222333"
-# Liens Paystack (deux liens séparés)
-PAYSTACK_TIKTOK = os.getenv("PAYSTACK_TIKTOK", "")   # lien paiement pour TikTok (5000)
-PAYSTACK_FACEBOOK = os.getenv("PAYSTACK_FACEBOOK", "") # lien paiement pour Facebook (8000)
-# Lien du tutoriel (canal / vidéo) à envoyer après paiement
-TUTORIAL_LINK = os.getenv("TUTORIAL_LINK", "")
+# =================== 🛑 CONFIGURATION - REMPLISSEZ ICI DIRECTEMENT 🛑 ===================
+
+# 1. Votre Jeton (Token) Telegram Bot (ex: "123456:AABBCC...")
+TELEGRAM_TOKEN = "VOTRE_TOKEN_TELEGRAM_ICI" 
+
+# 2. Clé Secrète Paystack (sk_live_xxxx... - OBLIGATOIRE pour l'automatisation)
+PAYSTACK_SECRET_KEY = "VOTRE_CLE_SECRETE_PAYSTACK_ICI" 
+
+# 3. ID de votre groupe/chat admin (où vous recevez les notifications)
+# Doit commencer par -100 si c'est un groupe. (ex: -100123456789)
+GROUP_ID = int("-100VOTRE_ID_DE_GROUPE_ICI") 
+
+# 4. ID des administrateurs exemptés de paiement (séparés par des virgules)
+ADMIN_IDS = "12345678, 98765432"
+
+# 5. URL Publique de votre serveur (vous devez la connaître après le déploiement initial)
+# Exemple: "https://mon-bot-payant-xxxx.onrender.com"
+EXTERNAL_URL = "VOTRE_URL_PUBLIQUE_DE_L_HEBERGEUR_ICI" 
+
+# --- Liens et Prix ---
+
+# Lien du tutoriel à envoyer après paiement
+TUTORIAL_LINK = "https://lien-vers-votre-tutoriel.com/tiktok_fb" 
 # Lien support WhatsApp
-SUPPORT_LINK = os.getenv("SUPPORT_LINK", "")
-# Prix (affichage)
-PRICE_TIKTOK = os.getenv("PRICE_TIKTOK", "5000")
-PRICE_FACEBOOK = os.getenv("PRICE_FACEBOOK", "8000")
+SUPPORT_LINK = "https://wa.me/votrenumero" 
+# Prix (affichage et montant Paystack)
+PRICE_TIKTOK = "5000"
+PRICE_FACEBOOK = "8000"
+# Port d'écoute du serveur (souvent 5000 par défaut)
+PORT = 5000 
 # ================================================================================================
 
 # Conversation states
@@ -43,6 +58,12 @@ LANG, SERVICE, COUNTRY, WHATSAPP, WAIT_PAYMENT = range(5)
 # Logging
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Flask App pour les webhooks (Paystack et Telegram)
+flask_app = Flask(__name__)
+
+# Base de données temporaire pour stocker les infos utilisateur avant le paiement
+PENDING_ORDERS = {} # key: user_id, value: {'service': str, 'country': str, 'whatsapp': str}
 
 # Helper: admin list as ints
 def get_admin_ids():
@@ -57,23 +78,26 @@ TEXT = {
     "menu": ["Monétiser TikTok", "Monétiser Facebook", "📞 Contacter Support", "❓ Comment ça marche"],
     "ask_country": "Dans quel pays êtes-vous ? 🌍",
     "ask_whatsapp": "Donnez votre numéro WhatsApp (format international recommandé, ex: +22570xxxxxxx) :",
-    "price_tiktok": f"💰 Prix TikTok : *{PRICE_TIKTOK} F CFA*.\nCliquez sur le bouton PAYER pour procéder au paiement.",
-    "price_facebook": f"💰 Prix Facebook : *{PRICE_FACEBOOK} F CFA*.\nCliquez sur le bouton PAYER pour procéder au paiement.",
+    "price_tiktok": f"💰 Prix TikTok : *{PRICE_TIKTOK} F CFA*.\n\n*Cliquez sur le bouton pour générer votre lien de paiement personnalisé.*",
+    "price_facebook": f"💰 Prix Facebook : *{PRICE_FACEBOOK} F CFA*.\n\n*Cliquez sur le bouton pour générer votre lien de paiement personnalisé.*",
+    "pay_button_tiktok": f"Générer Lien de Paiement ({PRICE_TIKTOK} F CFA)",
+    "pay_button_facebook": f"Générer Lien de Paiement ({PRICE_FACEBOOK} F CFA)",
     "how_it_works": (
-        "🔎 *Comment ça marche*\n\n"
+        "🔎 *Comment ça marche (Automatisé)*\n\n"
         "1) Choisissez le service (TikTok ou Facebook).\n"
         "2) Indiquez votre pays et votre numéro WhatsApp.\n"
-        "3) Le bot affiche le prix et le bouton de paiement.\n"
-        "4) Après paiement confirmé (Paystack), le tutoriel est envoyé automatiquement.\n\n"
-        "Important : *Vous devez payer avant d’accéder au tutoriel.*\n"
-        "Le bot n'est pas responsable si vous ne suivez pas la procédure. *Aucun remboursement.*"
+        "3) Le bot génère un lien de paiement Paystack personnalisé.\n"
+        "4) Après paiement confirmé par Paystack, *le tutoriel est envoyé automatiquement par le bot*.\n\n"
+        "Important : *Le processus est 100% automatique après paiement. Aucun screenshot n'est nécessaire.*"
     ),
     "admin_note": "Vous êtes admin — accès direct au tutoriel sans paiement.",
-    "pay_missing": "⚠️ Le lien de paiement n'est pas configuré. Contactez le support.",
-    "thanks_auto": "✅ Paiement confirmé — le tutoriel vous a été envoyé.",
+    "pay_missing": "⚠️ Erreur de configuration: Clé Paystack ou URL non configurée. Contactez le support.",
+    "thanks_auto": "✅ Paiement confirmé ! Le tutoriel vous a été envoyé ci-dessous.",
     "no_tutorial": "✅ Paiement confirmé — le tutoriel sera envoyé dès que disponible.",
     "support_text": "Contactez le support via ce lien :",
-    "cancel": "Commande annulée. Tapez /start pour recommencer."
+    "cancel": "Commande annulée. Tapez /start pour recommencer.",
+    "error_paystack": "Une erreur est survenue lors de la création du lien de paiement. Veuillez réessayer ou contacter le support.",
+    "waiting_payment": "⏳ *En attente de votre paiement...*\n\nCliquez sur le lien ci-dessus pour finaliser la transaction. *La livraison du tutoriel sera automatique.*"
 }
 
 # Keyboards
@@ -87,18 +111,19 @@ def main_menu_keyboard():
     ]
     return InlineKeyboardMarkup(keyboard)
 
-def pay_keyboard_for_service(service_key):
-    # service_key: "tiktok" or "facebook"
-    if service_key == "tiktok" and PAYSTACK_TIKTOK:
-        pay_button = InlineKeyboardButton("Payer (Paystack) - TikTok", url=PAYSTACK_TIKTOK)
-    elif service_key == "facebook" and PAYSTACK_FACEBOOK:
-        pay_button = InlineKeyboardButton("Payer (Paystack) - Facebook", url=PAYSTACK_FACEBOOK)
-    else:
-        pay_button = InlineKeyboardButton("Payer (lien non configuré)", callback_data="no_link")
+def generate_pay_keyboard(service):
+    data = f"generate_pay_{service}"
+    text = TEXT["pay_button_tiktok"] if service == "tiktok" else TEXT["pay_button_facebook"]
     keyboard = [
-        [pay_button],
-        [InlineKeyboardButton("✅ J'ai payé (envoyer preuve)", callback_data="i_paid")],
+        [InlineKeyboardButton(text, callback_data=data)],
         [InlineKeyboardButton("❌ Annuler", callback_data="cancel_order")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def pay_link_keyboard(pay_url):
+    keyboard = [
+        [InlineKeyboardButton("💳 Payer Maintenant", url=pay_url)],
+        [InlineKeyboardButton("❌ Annuler la commande", callback_data="cancel_order")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -107,10 +132,97 @@ def support_keyboard():
         return InlineKeyboardMarkup([[InlineKeyboardButton("Contacter support", url=SUPPORT_LINK)]])
     return InlineKeyboardMarkup([[InlineKeyboardButton("Contacter support (non configuré)", callback_data="no_support")]])
 
-# Handlers
+# ======================= FONCTION DE LIVRAISON (Utilisée par le Webhook) =======================
+
+async def deliver_tutorial(user_id: int, service: str, reference: str, app: Application):
+    """Envoie le tutoriel à l'utilisateur après confirmation du paiement."""
+    
+    logger.info(f"Début de livraison automatique pour user: {user_id}, ref: {reference}")
+    
+    # 1. Envoyer le tutoriel
+    if TUTORIAL_LINK:
+        text = f"{TEXT['thanks_auto']}\n{TUTORIAL_LINK}"
+    else:
+        text = TEXT["no_tutorial"]
+        
+    try:
+        await app.bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"Impossible d'envoyer le message de livraison à {user_id}: {e}")
+        
+    # 2. Notifier les admins
+    try:
+        # Récupérer les infos utilisateurs depuis le stockage temporaire ou les données de l'application
+        user_info = app.user_data.get(user_id, PENDING_ORDERS.get(user_id, {'service': 'N/A', 'country': 'N/A', 'whatsapp': 'N/A'}))
+        admin_msg = (
+            f"🎉 *PAIEMENT AUTOMATIQUE CONFIRMÉ*\n"
+            f"• *Utilisateur ID* : {user_id}\n"
+            f"• *Service* : {service}\n"
+            f"• *Ref Paystack* : {reference}\n"
+            f"• *Pays* : {user_info.get('country')}\n"
+            f"• *WhatsApp* : {user_info.get('whatsapp')}"
+        )
+        await app.bot.send_message(chat_id=GROUP_ID, text=admin_msg, parse_mode="Markdown")
+    except Exception as e:
+        logger.exception(f"Erreur en notifiant le groupe admin: {e}")
+        
+    # 3. Nettoyer les données temporaires
+    if user_id in PENDING_ORDERS:
+        del PENDING_ORDERS[user_id]
+    
+# ======================= LOGIQUE DE PAIEMENT PAYSTACK =======================
+
+def initialize_paystack_transaction(user_id, service, email, amount, whatsapp):
+    """Appel à l'API Paystack pour obtenir un lien de paiement dynamique."""
+    url = "https://api.paystack.co/transaction/initialize"
+    try:
+        amount_kobo = int(amount) * 100 # Montant en kobo/centimes
+    except ValueError:
+        logger.error(f"Montant invalide: {amount}")
+        return None
+
+    # CRUCIAL : Inclusion de la metadata avec l'ID Telegram
+    metadata = {
+        "custom_fields": [
+            {"display_name": "Telegram ID", "variable_name": "telegram_id", "value": user_id},
+            {"display_name": "Service", "variable_name": "service_type", "value": service},
+            {"display_name": "WhatsApp", "variable_name": "whatsapp_number", "value": whatsapp},
+        ]
+    }
+    
+    payload = {
+        "email": email,
+        "amount": amount_kobo,
+        "metadata": metadata,
+        # URL de retour après paiement (optionnel)
+        "callback_url": f"{EXTERNAL_URL}/paystack-callback" 
+    }
+
+    headers = {
+        "Authorization": f"Bearer {PAYSTACK_SECRET_KEY}",
+        "Content-Type": "application/json"
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, data=json.dumps(payload))
+        response.raise_for_status()
+        data = response.json()
+        if data.get('status'):
+            return data['data']['authorization_url']
+        return None
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Erreur d'initialisation Paystack: {e}")
+        return None
+
+# ======================= HANDLERS TELEGRAM =======================
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Stocker l'ID de l'utilisateur dans le contexte de l'application (pour le webhook)
+    user_id = update.effective_user.id
+    if user_id not in context.application.user_data:
+         context.application.user_data[user_id] = {}
+    
     await update.message.reply_text(TEXT["choose_language"])
-    # On skip language selection since only FR required by you
     await update.message.reply_text(TEXT["welcome"], reply_markup=main_menu_keyboard())
     return SERVICE
 
@@ -118,7 +230,9 @@ async def service_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
-
+    # Utiliser context.application.user_data pour stocker les données de manière persistante
+    user_data = context.application.user_data.get(query.from_user.id) or {}
+    
     if data == "contact_support":
         await query.message.reply_text(f"{TEXT['support_text']} {SUPPORT_LINK}", reply_markup=support_keyboard())
         return ConversationHandler.END
@@ -128,140 +242,123 @@ async def service_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     if data == "service_tiktok":
-        context.user_data["service"] = "tiktok"
+        user_data["service"] = "tiktok"
         await query.message.reply_text(TEXT["ask_country"], reply_markup=ReplyKeyboardRemove())
         return COUNTRY
 
     if data == "service_facebook":
-        context.user_data["service"] = "facebook"
+        user_data["service"] = "facebook"
         await query.message.reply_text(TEXT["ask_country"], reply_markup=ReplyKeyboardRemove())
         return COUNTRY
-
-    # fallback
+    
     await query.message.reply_text("Option inconnue.")
     return ConversationHandler.END
 
 async def country_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["country"] = update.message.text.strip()
+    user_id = update.effective_user.id
+    user_data = context.application.user_data.get(user_id, {})
+    user_data["country"] = update.message.text.strip()
     await update.message.reply_text(TEXT["ask_whatsapp"])
     return WHATSAPP
 
 async def whatsapp_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["whatsapp"] = update.message.text.strip()
-    service = context.user_data.get("service")
     user_id = update.effective_user.id
-    admin_ids = get_admin_ids()
+    user_data = context.application.user_data.get(user_id, {})
+    user_data["whatsapp"] = update.message.text.strip()
+    service = user_data.get("service")
+    
+    # Stocker temporairement dans PENDING_ORDERS (pour l'accès depuis le webhook)
+    PENDING_ORDERS[user_id] = user_data
 
-    # If user is admin -> send tutorial directly (admin exempt)
-    if user_id in admin_ids:
-        # send admin note and tutorial
+    # Si admin
+    if user_id in get_admin_ids():
         await update.message.reply_text(TEXT["admin_note"])
         if TUTORIAL_LINK:
             await update.message.reply_text(f"Voici le tutoriel :\n{TUTORIAL_LINK}")
         else:
             await update.message.reply_text("Le lien du tutoriel n'est pas encore configuré.")
-        # also send record to admin group that admin viewed
-        admin_msg = (
-            f"🔰 *ADMIN VIEW*\n"
-            f"• Admin id: {user_id}\n"
-            f"• Service: {service}\n"
-        )
-        try:
-            await context.bot.send_message(chat_id=GROUP_ID, text=admin_msg, parse_mode="Markdown")
-        except Exception as e:
-            logger.exception("Erreur en notifiant le groupe admin: %s", e)
-        context.user_data.clear()
+        
+        # Nettoyage
+        if user_id in PENDING_ORDERS: del PENDING_ORDERS[user_id]
         return ConversationHandler.END
 
-    # Non-admin: show price & pay link for the chosen service
+    # Non-admin: Afficher les infos de prix et le bouton de génération de lien
     if service == "tiktok":
-        await update.message.reply_markdown(TEXT["price_tiktok"], reply_markup=pay_keyboard_for_service("tiktok"))
+        await update.message.reply_markdown(TEXT["price_tiktok"], reply_markup=generate_pay_keyboard("tiktok"))
     elif service == "facebook":
-        await update.message.reply_markdown(TEXT["price_facebook"], reply_markup=pay_keyboard_for_service("facebook"))
+        await update.message.reply_markdown(TEXT["price_facebook"], reply_markup=generate_pay_keyboard("facebook"))
     else:
         await update.message.reply_text("Service inconnu. Tape /start pour recommencer.")
-        context.user_data.clear()
+        if user_id in PENDING_ORDERS: del PENDING_ORDERS[user_id]
         return ConversationHandler.END
-
-    # Inform user of policies (no refund, bot not responsible)
-    policy = (
-        "⚠️ *Important*\n"
-        "- Vous devez payer avant d'accéder au tutoriel.\n"
-        "- Aucun remboursement.\n"
-        "- Le bot n'est pas responsable si vous ne suivez pas la procédure.\n"
-    )
-    await update.message.reply_markdown(policy)
+        
     return WAIT_PAYMENT
+
+async def generate_payment_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer("Génération du lien de paiement en cours...")
+    
+    user_id = query.from_user.id
+    user_data = PENDING_ORDERS.get(user_id) or context.application.user_data.get(user_id)
+    service = user_data.get("service")
+    whatsapp = user_data.get("whatsapp")
+
+    if not PAYSTACK_SECRET_KEY or not EXTERNAL_URL:
+        await query.message.reply_text(TEXT["pay_missing"], reply_markup=support_keyboard())
+        return WAIT_PAYMENT
+    
+    if service == "tiktok":
+        amount = PRICE_TIKTOK
+    elif service == "facebook":
+        amount = PRICE_FACEBOOK
+    else:
+        await query.message.reply_text("Service ou données manquantes. Recommencez avec /start.")
+        return ConversationHandler.END
+        
+    default_email = f"telegram{user_id}@notcollected.com"
+        
+    # Initialisation de la transaction Paystack
+    pay_url = initialize_paystack_transaction(user_id, service, default_email, amount, whatsapp)
+
+    if pay_url:
+        await query.edit_message_text(
+            TEXT["waiting_payment"], 
+            parse_mode="Markdown", 
+            reply_markup=pay_link_keyboard(pay_url)
+        )
+        return WAIT_PAYMENT
+    else:
+        await query.edit_message_text(TEXT["error_paystack"])
+        return ConversationHandler.END
 
 async def wait_payment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
-
-    if data == "no_link":
-        await query.message.reply_text(TEXT["pay_missing"], reply_markup=support_keyboard())
-        return WAIT_PAYMENT
+    
+    if data.startswith("generate_pay_"):
+        return await generate_payment_link(update, context)
 
     if data == "cancel_order":
         await query.message.reply_text(TEXT["cancel"])
-        context.user_data.clear()
+        user_id = update.effective_user.id
+        if user_id in PENDING_ORDERS: del PENDING_ORDERS[user_id]
         return ConversationHandler.END
-
-    if data == "i_paid":
-        # ask user to send screenshot (we keep fallback check even if Auto Paystack is used)
-        await query.message.reply_text("➡️ Merci. Envoie ici la capture du paiement (image).")
-        # now wait for image/document; handled by screenshot handler below
-        return WAIT_PAYMENT
-
+    
     return WAIT_PAYMENT
-
-async def screenshot_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # If user sends screenshot (photo/document) — forward to admin group and remind that webhook will auto-deliver if Paystack used
-    user = update.effective_user
-    service = context.user_data.get("service", "—")
-    country = context.user_data.get("country", "—")
-    whatsapp = context.user_data.get("whatsapp", "—")
-    caption = (
-        f"📥 *Preuve manuelle reçue*\n"
-        f"• *Utilisateur* : {user.full_name} (id:{user.id})\n"
-        f"• *Service* : {service}\n"
-        f"• *Pays* : {country}\n"
-        f"• *WhatsApp* : {whatsapp}\n"
-    )
-    try:
-        if update.message.photo:
-            photo = update.message.photo[-1]
-            await context.bot.send_photo(chat_id=GROUP_ID, photo=photo.file_id, caption=caption, parse_mode="Markdown")
-        elif update.message.document:
-            doc = update.message.document
-            await context.bot.send_document(chat_id=GROUP_ID, document=doc.file_id, caption=caption, parse_mode="Markdown")
-        else:
-            await context.bot.send_message(chat_id=GROUP_ID, text=caption, parse_mode="Markdown")
-            await context.bot.forward_message(chat_id=GROUP_ID, from_chat_id=update.effective_chat.id, message_id=update.message.message_id)
-    except Exception as e:
-        logger.exception("Erreur en envoyant la preuve au groupe: %s", e)
-        await update.message.reply_text("Erreur interne. Contacte le support.")
-        context.user_data.clear()
-        return ConversationHandler.END
-
-    # remind user that if Paystack webhook is configured the tutorial will be sent automatically; otherwise admin will validate.
-    await update.message.reply_text("✅ Preuve reçue. Si votre paiement a bien été reçu, vous recevrez automatiquement le tutoriel une fois la transaction confirmée (ou l'admin vous validera).")
-    context.user_data.clear()
-    return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(TEXT["cancel"])
-    context.user_data.clear()
+    user_id = update.effective_user.id
+    if user_id in PENDING_ORDERS: del PENDING_ORDERS[user_id]
     return ConversationHandler.END
 
-# Admin-only command to send tutorial to a user (for manual override)
 async def admin_send_tutorial(update: Update, context: ContextTypes.DEFAULT_TYPE):
     admin_ids = get_admin_ids()
     user_id = update.effective_user.id
     if user_id not in admin_ids:
         await update.message.reply_text("Commande réservée aux admins.")
         return
-    # usage: /sendtutorial <telegram_id>
     args = context.args
     if not args:
         await update.message.reply_text("Usage: /sendtutorial <telegram_user_id>")
@@ -277,11 +374,73 @@ async def admin_send_tutorial(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("Erreur lors de l'envoi.")
         logger.exception(e)
 
+
+# ======================= LOGIQUE FLASK & WEBHOOK PAYSTACK =======================
+
+@flask_app.route('/' + TELEGRAM_TOKEN, methods=['POST'])
+async def telegram_webhook_handler():
+    """Gère toutes les mises à jour Telegram (messages, boutons, etc.)."""
+    update = Update.de_json(request.get_json(force=True), telegram_app.bot)
+    await telegram_app.process_update(update)
+    return 'ok'
+
+@flask_app.route('/paystack-webhook', methods=['POST'])
+async def paystack_webhook_handler():
+    """Gère la notification de paiement Paystack."""
+    data = request.get_json(force=True)
+    
+    # ⚠️ Vérification de sécurité de la signature (Crucial en Prod) - OMPLÉTÉE par la vérification API
+    
+    event = data.get('event')
+    
+    if event == 'charge.success':
+        transaction = data.get('data')
+        reference = transaction.get('reference')
+        
+        # --- (A) Vérification de la Transaction avec l'API Paystack ---
+        verification_url = f"https://api.paystack.co/transaction/verify/{reference}"
+        headers = {"Authorization": f"Bearer {PAYSTACK_SECRET_KEY}"}
+        
+        try:
+            response = requests.get(verification_url, headers=headers)
+            response.raise_for_status()
+            verification_data = response.json()
+        
+            if not verification_data.get('status') or verification_data.get('data').get('status') != 'success':
+                logger.error(f"Paystack verification failed for ref {reference} (API check)")
+                return jsonify({'status': 'failed', 'message': 'Verification failed'}), 200
+            
+            # --- (B) Récupérer l'ID Utilisateur depuis la Metadata ---
+            metadata = verification_data.get('data').get('metadata', {})
+            custom_fields = metadata.get('custom_fields', [])
+            user_id_val = next((f['value'] for f in custom_fields if f.get('variable_name') == 'telegram_id'), None)
+            service = next((f['value'] for f in custom_fields if f.get('variable_name') == 'service_type'), 'N/A')
+            
+            if not user_id_val:
+                logger.error(f"User ID missing in metadata for ref {reference}")
+                return jsonify({'status': 'error', 'message': 'Missing user_id'}), 200
+
+            user_id = int(user_id_val)
+            
+            # --- (C) Livrer le Tutoriel ---
+            # Nécessite de lancer une tâche asynchrone pour la livraison
+            asyncio.run(deliver_tutorial(user_id, service, reference, telegram_app))
+            
+            return jsonify({'status': 'ok', 'message': 'Delivery initiated'}), 200
+
+        except Exception as e:
+            logger.exception(f"Error processing Paystack webhook: {e}")
+            return jsonify({'status': 'error', 'message': 'Internal Error'}), 200
+            
+    return jsonify({'status': 'ignored', 'message': f'Event {event} ignored'}), 200
+
+# ======================= CONSTRUCTION ET LANCEMENT =======================
+
 def build_app():
     if not TELEGRAM_TOKEN:
         raise RuntimeError("TELEGRAM_TOKEN non configuré.")
     application = Application.builder().token(TELEGRAM_TOKEN).build()
-
+    
     conv = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
@@ -289,8 +448,7 @@ def build_app():
             COUNTRY: [MessageHandler(filters.TEXT & ~filters.COMMAND, country_received)],
             WHATSAPP: [MessageHandler(filters.TEXT & ~filters.COMMAND, whatsapp_received)],
             WAIT_PAYMENT: [
-                CallbackQueryHandler(wait_payment_handler, pattern="^(no_link|i_paid|cancel_order)$"),
-                MessageHandler(filters.PHOTO | filters.Document.IMAGE | filters.Document.FILE, screenshot_handler),
+                CallbackQueryHandler(wait_payment_handler, pattern="^(generate_pay_|cancel_order)$"),
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
@@ -302,8 +460,17 @@ def build_app():
     application.add_handler(CommandHandler("sendtutorial", admin_send_tutorial))
     return application
 
-# Entrée pour exécution directe (polling) utile en local
+telegram_app = build_app()
+
 if __name__ == "__main__":
-    app = build_app()
-    print("Lancement du bot en mode polling (local/test).")
-    app.run_polling()
+    if not TELEGRAM_TOKEN or not EXTERNAL_URL or not PAYSTACK_SECRET_KEY:
+        print("ERREUR: Veuillez configurer toutes les variables cruciales dans le code.")
+    else:
+        # Configuration du webhook Telegram
+        print("Configuration du Webhook Telegram...")
+        telegram_app.bot.set_webhook(url=f"{EXTERNAL_URL}/{TELEGRAM_TOKEN}")
+        
+        # Lancement de l'application Flask pour écouter les webhooks Paystack et Telegram
+        print(f"Lancement du serveur Flask sur le port {PORT}...")
+        
+        flask_app.run(host='0.0.0.0', port=PORT)
