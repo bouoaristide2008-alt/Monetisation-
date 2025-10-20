@@ -26,7 +26,7 @@ from telegram.ext import (
 TELEGRAM_TOKEN = "8020027521:AAHRypwd_Xx0AiyrDGfJJtEe8jhYcQ29wlQ" 
 
 # 2. Clé Secrète Paystack (sk_live_xxxx... - OBLIGATOIRE pour l'automatisation)
-PAYSTACK_SECRET_KEY = "VOTRE_CLE_SECRETE_PAYSTACK_ICI" 
+PAYSTACK_SECRET_KEY = "sk_live_8f2109f9d42cb8bd8b539f19025ce959b51234d3" 
 
 # 3. ID de votre groupe/chat admin (où vous recevez les notifications)
 # Doit commencer par -100 si c'est un groupe. (ex: -100123456789)
