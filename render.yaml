@@ -1,3 +1,0 @@
-services:
-  - type: worker
-    env: python
