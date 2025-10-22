@@ -6,7 +6,7 @@ Bot Telegram - Monétisation automatique (version finale)
 - Paystack webhook vérifié (signature HMAC + verification API).
 - Livraison automatique en tâche de fond.
 - Bouton "⬅️ Retour" présent à chaque étape.
-- Compatible python-telegram-bot v20+ / Python 3.10+.
+- Conçu pour python-telegram-bot v21+ / Python 3.10+.
 """
 
 import os
@@ -43,7 +43,7 @@ from telegram.ext import (
 )
 
 # -------------------------
-# Configuration via env vars (Render)
+# Configuration via env vars
 # -------------------------
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()
 EXTERNAL_URL = os.getenv("EXTERNAL_URL", "").strip()  # ex: https://monbot.onrender.com
@@ -272,14 +272,12 @@ def verify_paystack_transaction(reference: str) -> Optional[Dict]:
 async def deliver_tutorial(user_id: int, service: str, reference: str, app: Application):
     """Send tutorial link to user and notify admin group. Add small sleeps to avoid rate limits."""
     try:
-        # Choose tutorial: here we use the HOW_IT_WORKS_CHANNEL as delivery target (you can change)
         text = f"{TEXT['thanks_auto']}\n{HOW_IT_WORKS_CHANNEL or 'Le tutoriel n est pas configuré.'}"
         await app.bot.send_message(chat_id=user_id, text=text)
         await asyncio.sleep(0.15)
     except Exception:
         logger.exception("Failed to send tutorial to %s", user_id)
 
-    # Notify admin group
     order = load_order(user_id) or {}
     admin_msg = (
         f"🎉 PAIEMENT CONFIRMÉ\n"
@@ -295,7 +293,6 @@ async def deliver_tutorial(user_id: int, service: str, reference: str, app: Appl
     except Exception:
         logger.exception("Failed to notify admin group")
 
-    # cleanup
     try:
         delete_order(user_id)
     except Exception:
@@ -314,19 +311,15 @@ def start_delivery_bg(user_id: int, service: str, reference: str, app: Applicati
 # Telegram handlers (Conversation)
 # -------------------------
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # reset any leftover state
     context.user_data.clear()
     await update.message.reply_text(TEXT["start"], reply_markup=main_menu_keyboard())
-
     return SERVICE
 
-# handler for callback choices and back navigation
 async def handler_service_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     data = q.data
 
-    # back navigation targets
     if data == "back_to_menu":
         context.user_data.clear()
         await q.message.edit_text(TEXT["start"], reply_markup=main_menu_keyboard())
@@ -337,36 +330,29 @@ async def handler_service_choice(update: Update, context: ContextTypes.DEFAULT_T
         await q.message.edit_text(TEXT["cancel"])
         return ConversationHandler.END
 
-    if data == "tiktok" or data == "facebook":
-        # store service and ask country; show back button to main menu
+    if data in ("tiktok", "facebook"):
         context.user_data["service"] = data
         context.user_data["username"] = q.from_user.username or ""
         await q.message.edit_text(TEXT["ask_country"], reply_markup=back_button_keyboard("back_to_menu"))
         return COUNTRY
 
-    # fallback: show menu
     await q.message.edit_text("Option inconnue.", reply_markup=main_menu_keyboard())
     return ConversationHandler.END
 
 async def handler_country(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Allow user to type '⬅️ Retour' by pressing the inline back button; text input here is country
     text = update.message.text.strip()
     context.user_data["country"] = text
-    # ask whatsapp with a back button to service choice
     await update.message.reply_text(TEXT["ask_whatsapp"], reply_markup=back_button_keyboard("back_to_menu"))
     return WHATSAPP
 
 async def handler_whatsapp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip()
-    # store whatsapp
     context.user_data["whatsapp"] = text
     user_data = context.user_data
 
-    # persist order to DB
     save_order(user_id, user_data)
 
-    # if admin -> immediate access
     if is_admin(user_id):
         await update.message.reply_text(TEXT["admin_note"])
         if HOW_IT_WORKS_CHANNEL:
@@ -375,13 +361,10 @@ async def handler_whatsapp(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.clear()
         return ConversationHandler.END
 
-    # Prepare payment link
     service = user_data.get("service")
     if service == "tiktok":
-        amount = PRICE_TIKTOK
         pay_url = TIKTOK_PAYSTACK_LINK or initialize_paystack_transaction(user_id, "tiktok", f"telegram{user_id}@noemail.local", PRICE_TIKTOK, user_data.get("whatsapp",""))
     else:
-        amount = PRICE_FACEBOOK
         pay_url = FACEBOOK_PAYSTACK_LINK or initialize_paystack_transaction(user_id, "facebook", f"telegram{user_id}@noemail.local", PRICE_FACEBOOK, user_data.get("whatsapp",""))
 
     if not pay_url:
@@ -395,11 +378,10 @@ async def handler_whatsapp(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{price_text}\n\n{TEXT['after_payment']}",
         reply_markup=pay_button_by_service(pay_url)
     )
-    # keep data until paid or canceled
     return ConversationHandler.END
 
 async def handler_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # supports /cancel command
+    # /cancel command handler
     context.user_data.clear()
     user_id = update.effective_user.id
     delete_order(user_id)
@@ -430,19 +412,16 @@ async def admin_send_tutorial_cmd(update: Update, context: ContextTypes.DEFAULT_
 # -------------------------
 @flask_app.route("/telegram-webhook/" + (TELEGRAM_TOKEN or "token_missing"), methods=["POST"])
 def telegram_webhook():
-    """Receive Telegram updates (set webhook to EXTERNAL_URL/telegram-webhook/<TOKEN>)"""
     global telegram_app
     if not telegram_app:
         return "app not ready", 503
     data = request.get_json(force=True)
     update = Update.de_json(data, telegram_app.bot)
-    # Process update in background to avoid blocking webhook
     threading.Thread(target=lambda: asyncio.run(telegram_app.process_update(update)), daemon=True).start()
     return "ok", 200
 
 @flask_app.route("/paystack-webhook", methods=["POST"])
 def paystack_webhook():
-    """Handle Paystack webhook: verify signature and process successful charges"""
     payload = request.data or b""
     try:
         data = request.get_json(force=True)
@@ -450,7 +429,6 @@ def paystack_webhook():
         logger.exception("Invalid JSON in Paystack webhook")
         return jsonify({"status": "error", "message": "invalid json"}), 400
 
-    # Verify signature header if available (use PAYSTACK_WEBHOOK_SECRET)
     signature = request.headers.get("x-paystack-signature", "")
     if PAYSTACK_WEBHOOK_SECRET:
         if not signature:
@@ -496,13 +474,11 @@ def paystack_webhook():
         logger.exception("Invalid telegram_id in metadata: %s", user_id_val)
         return jsonify({"status": "error", "message": "invalid telegram id"}), 200
 
-    # Mark paid
     try:
         mark_order_paid_by_user(user_id, reference)
     except Exception:
         logger.exception("Failed to mark order paid in DB")
 
-    # Start background delivery
     threading.Thread(target=start_delivery_bg, args=(user_id, service_type or "N/A", reference, telegram_app), daemon=True).start()
 
     return jsonify({"status": "ok", "message": "delivery initiated"}), 200
@@ -541,7 +517,6 @@ build_telegram_app()
 # Start (safe webhook set + Flask)
 # -------------------------
 if __name__ == "__main__":
-    # Validate required env vars early
     missing = []
     if not TELEGRAM_TOKEN:
         missing.append("TELEGRAM_TOKEN")
@@ -551,10 +526,8 @@ if __name__ == "__main__":
         logger.error("Missing required env vars: %s. Exiting.", ", ".join(missing))
         raise SystemExit(1)
 
-    # Set webhook safely if EXTERNAL_URL given
     if TELEGRAM_TOKEN and EXTERNAL_URL:
         try:
-            # set_webhook can be coroutine depending on PTB version; use asyncio.run to be safe
             asyncio.run(telegram_app.bot.set_webhook(url=f"{EXTERNAL_URL}/telegram-webhook/{TELEGRAM_TOKEN}"))
             logger.info("Telegram webhook set to %s/telegram-webhook/%s", EXTERNAL_URL, TELEGRAM_TOKEN)
         except Exception:
