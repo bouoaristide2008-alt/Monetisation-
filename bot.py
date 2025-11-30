@@ -25,8 +25,8 @@ PAYMENT_LINK_TIKTOK = "https://paystack.shop/pay/9cct74ca6i"
 PAYMENT_LINK_FACEBOOK = "https://paystack.shop/pay/9cct74ca6i"
 
 # Groupes privés
-GROUP_TIKTOK = "https://t.me/+TCuZJmqAUj85ZTM8"
-GROUP_FACEBOOK = "https://t.me/+TCuZJmqAUj85ZTM8"
+GROUP_TIKTOK = "https://paystack.shop/pay/9-9a5jxmgd"
+GROUP_FACEBOOK = "https://paystack.shop/pay/21xb9p3kbn"
 
 # ==========================
 # INITIALISATION
@@ -96,11 +96,11 @@ def bot_logic(message):
         bot.send_message(
             message.chat.id,
             "📌 *Comment ça marche ?*\n\n"
-            "1️⃣ Choisissez une plateforme (TikTok ou Facebook)\n"
+            "1️⃣ Choisissez une plateforme que tu veut monétiser(TikTok ou Facebook)\n"
             "2️⃣ Remplissez vos informations\n"
             "3️⃣ Payez les frais de monétisation\n"
             "4️⃣ Vous recevez l’accès instantané au groupe privé\n"
-            "5️⃣ Vous êtes guidé étape par étape\n",
+            "5️⃣ Vous êtes guidé étape par étape pour la création n",
             parse_mode="Markdown"
         )
         return
