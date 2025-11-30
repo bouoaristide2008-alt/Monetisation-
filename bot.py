@@ -21,8 +21,8 @@ BOT_TOKEN = "8351407177:AAERierzxpvTwSb5WwlJf_TncwbXhE6xCA0"  # Ton token Telegr
 ADMINS = [6357925694]           # Ton ID admin Telegram
 
 # Liens Paystack
-PAYMENT_LINK_TIKTOK = "https://paystack.shop/pay/9cct74ca6i"
-PAYMENT_LINK_FACEBOOK = "https://paystack.shop/pay/9cct74ca6i"
+PAYMENT_LINK_TIKTOK = "https://paystack.shop/pay/9-9a5jxmgd"
+PAYMENT_LINK_FACEBOOK = "https://paystack.shop/pay/21xb9p3kbn"
 
 # Groupes privés
 GROUP_TIKTOK = "https://paystack.shop/pay/9-9a5jxmgd"
