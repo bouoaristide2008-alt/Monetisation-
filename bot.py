@@ -1,39 +1,51 @@
 # -*- coding: utf-8 -*-
 """
-Bot Telegram Monétisation
+Bot Telegram Monétisation – Version finale complète
 Auteur : Aristide
-Description :
-Bot complet pour monétiser TikTok et Facebook.
-Fonctionne 24h/24 sur Render.
-Collecte : nom, pays, numéro WhatsApp.
-Envoie : résumé + instructions + lien Paystack + accès groupe.
+Fonctionne 24h/24 sur Render (Flask + Threading)
 """
 
 import telebot
 from telebot import types
 import re
+from flask import Flask
+import threading
 
 # ==========================
-# CONFIGURATION (À MODIFIER)
+# CONFIGURATION
 # ==========================
 
-BOT_TOKEN = "8351407177:AAERierzxpvTwSb5WwlJf_TncwbXhE6xCA0"  # Ton token Telegram
-ADMINS = [6357925694]           # Ton ID admin Telegram
+BOT_TOKEN = "8351407177:AAERierzxpvTwSb5WwlJf_TncwbXhE6xCA0"   # <-- Ton token ici
+ADMINS = [6357925694]            # <-- Ton ID admin
 
 # Liens Paystack
 PAYMENT_LINK_TIKTOK = "https://paystack.shop/pay/9-9a5jxmgd"
 PAYMENT_LINK_FACEBOOK = "https://paystack.shop/pay/21xb9p3kbn"
 
 # Groupes privés
-GROUP_TIKTOK = "https://paystack.shop/pay/9-9a5jxmgd"
-GROUP_FACEBOOK = "https://paystack.shop/pay/21xb9p3kbn"
+GROUP_TIKTOK ="https://paystack.shop/pay/21xb9p3kbn"
+GROUP_FACEBOOK = "https://paystack.shop/pay/9-9a5jxmgd"
 
-# ==========================
-# INITIALISATION
-# ==========================
+# Support WhatsApp
+SUPPORT_WHATSAPP = "https://wa.me/2250503651426"
 
 bot = telebot.TeleBot(BOT_TOKEN)
-user_data = {}   # stocke les infos temporairement
+user_data = {}
+
+# ==========================
+# SERVEUR FLASK (Render)
+# ==========================
+
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "Bot Telegram fonctionnel."
+
+def run_flask():
+    app.run(host="0.0.0.0", port=8080)
+
+threading.Thread(target=run_flask).start()
 
 # ==========================
 # MENUS
@@ -58,14 +70,15 @@ def monetization_menu():
     return markup
 
 # ==========================
-# VALIDATION
+# VALIDATION NUMÉRO
 # ==========================
 
 def is_valid_number(number):
     return re.fullmatch(r"\+?\d{8,15}", number) is not None
 
+
 # ==========================
-# COMMAND START
+# START
 # ==========================
 
 @bot.message_handler(commands=["start"])
@@ -78,138 +91,341 @@ def start(message):
         reply_markup=main_menu()
     )
 
+
 # ==========================
-# GESTION DES TEXTES
+# SECTIONS
 # ==========================
 
-@bot.message_handler(func=lambda msg: True)
-def bot_logic(message):
+@bot.message_handler(func=lambda m: m.text == "Comment ça marche")
+def how_it_works(message):
+    bot.send_message(
+        message.chat.id,
+        "📌 *COMMENT FONCTIONNE LA MONÉTISATION ?*\n\n"
+        "Voici tout ce que tu dois savoir avant de commencer :\n\n"
+        "1️⃣ *La monétisation TikTok / Facebook est simple, rapide et sécurisée.*\n"
+        "Nous t’accompagnons étape par étape pour obtenir un compte monétisé.\n\n"
+        "2️⃣ *Tu choisis la plateforme :*\n"
+        "- TikTok (5 000 F)\n"
+        "- Facebook (10 000 F)\n\n"
+        "3️⃣ *Tu fournis :*\n"
+        "- Ton nom complet\n"
+        "- Ton pays\n"
+        "- Ton numéro WhatsApp\n\n"
+        "4️⃣ *Tu valides ton paiement via Paystack (100% sécurisé).* 🔒\n\n"
+        "5️⃣ *Après paiement, tu es automatiquement redirigé vers un groupe privé Telegram :*\n"
+        "✔️ Vidéo tutorielle\n"
+        "✔️ Guide complet\n"
+        "✔️ Assistant pour t’aider jusqu’à la fin\n\n"
+        "6️⃣ *En moins de 30 minutes, ton compte est prêt et monétisé.*\n\n"
+        "🎯 Notre objectif : rendre la monétisation accessible à tous.\n"
+        "Tu n’as rien à craindre — *on t’accompagne du début jusqu’à la fin.*",
+        parse_mode="Markdown"
+    )
+
+
+@bot.message_handler(func=lambda m: m.text == "Support")
+def support(message):
+    support_btn = types.InlineKeyboardMarkup()
+    support_btn.add(types.InlineKeyboardButton("📞 Contacter le support WhatsApp", url=SUPPORT_WHATSAPP))
+
+    bot.send_message(
+        message.chat.id,
+        "📞 *Support officiel*\nClique ci-dessous pour nous écrire directement sur WhatsApp 👇",
+        parse_mode="Markdown",
+        reply_markup=support_btn
+    )
+
+
+# ==========================
+# MONÉTISATION
+# ==========================
+
+@bot.message_handler(func=lambda m: m.text == "Monétisation")
+def monetisation(message):
+    bot.send_message(
+        message.chat.id,
+        "Choisis la plateforme que tu veux monétiser 👇",
+        reply_markup=monetization_menu()
+    )
+
+@bot.message_handler(func=lambda m: m.text in ["TikTok", "Facebook"])
+def choose_platform(message):
     user_id = message.from_user.id
-    text = message.text
+    user_data[user_id] = {"platform": message.text}
 
-    # Menu principal
-    if text == "Monétisation":
-        bot.send_message(message.chat.id, "Choisissez la plateforme :", reply_markup=monetization_menu())
-        return
+    bot.send_message(message.chat.id, "Quel est ton nom complet ?")
+    bot.register_next_step_handler(message, get_name)
 
-    if text == "Comment ça marche":
-        bot.send_message(
-            message.chat.id,
-            "📌 *Comment ça marche ?*\n\n"
-            "1️⃣ Choisissez une plateforme que tu veut monétiser(TikTok ou Facebook)\n"
-            "2️⃣ Remplissez vos informations\n"
-            "3️⃣ Payez les frais de monétisation\n"
-            "4️⃣ Vous recevez l’accès instantané au groupe privé\n"
-            "5️⃣ Vous êtes guidé étape par étape pour la création n",
-            parse_mode="Markdown"
-        )
-        return
+def get_name(message):
+    user_id = message.from_user.id
+    user_data[user_id]["name"] = message.text
 
-    if text == "Support":
-        bot.send_message(
-            message.chat.id,
-            "📞 *Support disponible 24h/24 :*\n"
-            "👉 Contactez un administrateur pour toute assistance.",
-            parse_mode="Markdown"
-        )
-        return
+    bot.send_message(message.chat.id, "Ton pays :")
+    bot.register_next_step_handler(message, get_country)
 
-    if text == "⬅️ Retour":
-        bot.send_message(message.chat.id, "Menu principal :", reply_markup=main_menu())
-        return
+def get_country(message):
+    user_id = message.from_user.id
+    user_data[user_id]["country"] = message.text
 
-    # ==========================
-    # MONÉTISATION → TIKTOK
-    # ==========================
-    if text == "TikTok":
-        user_data[user_id] = {"platform": "TikTok"}
-        bot.send_message(message.chat.id, "🎤 Entrez votre *nom complet* :", parse_mode="Markdown")
-        return
+    bot.send_message(message.chat.id, "Entre ton numéro WhatsApp (ex : +22507000000)")
+    bot.register_next_step_handler(message, get_whatsapp)
 
-    if text == "Facebook":
-        user_data[user_id] = {"platform": "Facebook"}
-        bot.send_message(message.chat.id, "🎤 Entrez votre *nom complet* :", parse_mode="Markdown")
-        return
+def get_whatsapp(message):
+    number = message.text
+    user_id = message.from_user.id
 
-    # ==========================
-    # COLLECTE DES INFOS
-    # ==========================
-    if user_id in user_data:
+    if not is_valid_number(number):
+        bot.send_message(message.chat.id, "❌ Numéro invalide. Réessaye.")
+        return bot.register_next_step_handler(message, get_whatsapp)
 
-        # Nom
-        if "name" not in user_data[user_id]:
-            user_data[user_id]["name"] = text
-            bot.send_message(message.chat.id, "🌍 Entrez votre *pays* :", parse_mode="Markdown")
-            return
+    user_data[user_id]["whatsapp"] = number
 
-        # Pays
-        if "country" not in user_data[user_id]:
-            user_data[user_id]["country"] = text
-            bot.send_message(message.chat.id, "📱 Entrez votre *numéro WhatsApp* :", parse_mode="Markdown")
-            return
+    platform = user_data[user_id]["platform"]
+    name = user_data[user_id]["name"]
+    country = user_data[user_id]["country"]
 
-        # Numéro WhatsApp
-        if "phone" not in user_data[user_id]:
+    link = PAYMENT_LINK_TIKTOK if platform == "TikTok" else PAYMENT_LINK_FACEBOOK
 
-            if not is_valid_number(text):
-                bot.send_message(
-                    message.chat.id,
-                    "❌ Numéro invalide.\n\nFormat accepté :\n+2250700000000 ou 0700000000"
-                )
-                return
+    group = GROUP_TIKTOK if platform == "TikTok" else GROUP_FACEBOOK
 
-            user_data[user_id]["phone"] = text
+    # Résumé
+    bot.send_message(
+        message.chat.id,
+        f"✅ *Récapitulatif :*\n\n"
+        f"👤 Nom : {name}\n"
+        f"🌍 Pays : {country}\n"
+        f"📱 WhatsApp : {number}\n"
+        f"🎯 Plateforme : {platform}\n\n"
+        f"💳 *Pour finaliser, clique sur le lien ci-dessous et valide le paiement :*\n{link}\n\n"
+        "Après ton paiement :\n"
+        "➡️ Tu seras automatiquement redirigé dans un groupe privé.\n"
+        "➡️ Tu verras une vidéo qui explique comment obtenir ton compte monétisé.\n"
+        "➡️ Un assistant t’aidera jusqu’à la création complète de ton compte.\n\n"
+        "⏳ *Ton compte sera prêt en moins de 30 minutes.*",
+        parse_mode="Markdown"
+    )
 
-            # ==========================
-            # AFFICHAGE RÉCAPITULATIF
-            # ==========================
-            data = user_data[user_id]
-            platform = data["platform"]
-
-            price = "5 000 F CFA" if platform == "TikTok" else "10 000 F CFA"
-            pay_link = PAYMENT_LINK_TIKTOK if platform == "TikTok" else PAYMENT_LINK_FACEBOOK
-            group_link = GROUP_TIKTOK if platform == "TikTok" else GROUP_FACEBOOK
-
-            bot.send_message(
-                message.chat.id,
-                f"🎉 *Informations reçues !*\n\n"
-                f"👤 Nom : {data['name']}\n"
-                f"🌍 Pays : {data['country']}\n"
-                f"📱 WhatsApp : {data['phone']}\n"
-                f"🎯 Plateforme : *{platform}*\n"
-                f"💵 Prix : *{price}*\n\n"
-                "Pour continuer, cliquez sur le lien ci-dessous pour effectuer votre paiement 👇",
-                parse_mode="Markdown"
-            )
-
-            # Lien Paystack
-            bot.send_message(message.chat.id, f"💳 *Lien de paiement :*\n{pay_link}")
-
-            # Message final
-            bot.send_message(
-                message.chat.id,
-                f"🔗 Après paiement, vous serez automatiquement ajouté dans le groupe privé :\n{group_link}"
-            )
-
-            # Envoi aux admins
-            for admin in ADMINS:
-                bot.send_message(
-                    admin,
-                    f"🆕 NOUVELLE DEMANDE :\n\n"
-                    f"Plateforme : {platform}\n"
-                    f"Nom : {data['name']}\n"
-                    f"Pays : {data['country']}\n"
-                    f"WhatsApp : {data['phone']}"
-                )
-
-            # Nettoyage de la mémoire
-            del user_data[user_id]
-
-            return
 
 # ==========================
-# LANCEMENT DU BOT
+# BOT RUN
 # ==========================
 
-print("Bot en ligne 24h/24…")
-bot.infinity_polling(skip_pending=True)
+def run_bot():
+    bot.polling(none_stop=True)
+
+threading.Thread(target=run_bot).start()# -*- coding: utf-8 -*-
+"""
+Bot Telegram Monétisation – Version finale complète
+Auteur : Aristide
+Fonctionne 24h/24 sur Render (Flask + Threading)
+"""
+
+import telebot
+from telebot import types
+import re
+from flask import Flask
+import threading
+
+# ==========================
+# CONFIGURATION
+# ==========================
+
+BOT_TOKEN = "VOTRE_TOKEN_ICI"   # <-- Ton token ici
+ADMINS = [123456789]            # <-- Ton ID admin
+
+# Liens Paystack
+PAYMENT_LINK_TIKTOK = "https://paystack.com/tiktok_5000"
+PAYMENT_LINK_FACEBOOK = "https://paystack.com/facebook_10000"
+
+# Groupes privés
+GROUP_TIKTOK = "https://t.me/groupe_tiktok"
+GROUP_FACEBOOK = "https://t.me/groupe_facebook"
+
+# Support WhatsApp
+SUPPORT_WHATSAPP = "https://wa.me/225XXXXXXXX"
+
+bot = telebot.TeleBot(BOT_TOKEN)
+user_data = {}
+
+# ==========================
+# SERVEUR FLASK (Render)
+# ==========================
+
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "Bot Telegram fonctionnel."
+
+def run_flask():
+    app.run(host="0.0.0.0", port=8080)
+
+threading.Thread(target=run_flask).start()
+
+# ==========================
+# MENUS
+# ==========================
+
+def main_menu():
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add(
+        types.KeyboardButton("Monétisation"),
+        types.KeyboardButton("Comment ça marche"),
+        types.KeyboardButton("Support")
+    )
+    return markup
+
+def monetization_menu():
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add(
+        types.KeyboardButton("TikTok"),
+        types.KeyboardButton("Facebook"),
+        types.KeyboardButton("⬅️ Retour")
+    )
+    return markup
+
+# ==========================
+# VALIDATION NUMÉRO
+# ==========================
+
+def is_valid_number(number):
+    return re.fullmatch(r"\+?\d{8,15}", number) is not None
+
+
+# ==========================
+# START
+# ==========================
+
+@bot.message_handler(commands=["start"])
+def start(message):
+    bot.send_message(
+        message.chat.id,
+        f"👋 Bonjour {message.from_user.first_name} !\n\n"
+        "Bienvenue dans notre système de monétisation 🎉\n"
+        "Choisissez une option ci-dessous 👇",
+        reply_markup=main_menu()
+    )
+
+
+# ==========================
+# SECTIONS
+# ==========================
+
+@bot.message_handler(func=lambda m: m.text == "Comment ça marche")
+def how_it_works(message):
+    bot.send_message(
+        message.chat.id,
+        "📌 *COMMENT FONCTIONNE LA MONÉTISATION ?*\n\n"
+        "Voici tout ce que tu dois savoir avant de commencer :\n\n"
+        "1️⃣ *La monétisation TikTok / Facebook est simple, rapide et sécurisée.*\n"
+        "Nous t’accompagnons étape par étape pour obtenir un compte monétisé.\n\n"
+        "2️⃣ *Tu choisis la plateforme :*\n"
+        "- TikTok (5 000 F)\n"
+        "- Facebook (10 000 F)\n\n"
+        "3️⃣ *Tu fournis :*\n"
+        "- Ton nom complet\n"
+        "- Ton pays\n"
+        "- Ton numéro WhatsApp\n\n"
+        "4️⃣ *Tu valides ton paiement via Paystack (100% sécurisé).* 🔒\n\n"
+        "5️⃣ *Après paiement, tu es automatiquement redirigé vers un groupe privé Telegram :*\n"
+        "✔️ Vidéo tutorielle\n"
+        "✔️ Guide complet\n"
+        "✔️ Assistant pour t’aider jusqu’à la fin\n\n"
+        "6️⃣ *En moins de 30 minutes, ton compte est prêt et monétisé.*\n\n"
+        "🎯 Notre objectif : rendre la monétisation accessible à tous.\n"
+        "Tu n’as rien à craindre — *on t’accompagne du début jusqu’à la fin.*",
+        parse_mode="Markdown"
+    )
+
+
+@bot.message_handler(func=lambda m: m.text == "Support")
+def support(message):
+    support_btn = types.InlineKeyboardMarkup()
+    support_btn.add(types.InlineKeyboardButton("📞 Contacter le support WhatsApp", url=SUPPORT_WHATSAPP))
+
+    bot.send_message(
+        message.chat.id,
+        "📞 *Support officiel*\nClique ci-dessous pour nous écrire directement sur WhatsApp 👇",
+        parse_mode="Markdown",
+        reply_markup=support_btn
+    )
+
+
+# ==========================
+# MONÉTISATION
+# ==========================
+
+@bot.message_handler(func=lambda m: m.text == "Monétisation")
+def monetisation(message):
+    bot.send_message(
+        message.chat.id,
+        "Choisis la plateforme que tu veux monétiser 👇",
+        reply_markup=monetization_menu()
+    )
+
+@bot.message_handler(func=lambda m: m.text in ["TikTok", "Facebook"])
+def choose_platform(message):
+    user_id = message.from_user.id
+    user_data[user_id] = {"platform": message.text}
+
+    bot.send_message(message.chat.id, "Quel est ton nom complet ?")
+    bot.register_next_step_handler(message, get_name)
+
+def get_name(message):
+    user_id = message.from_user.id
+    user_data[user_id]["name"] = message.text
+
+    bot.send_message(message.chat.id, "Ton pays :")
+    bot.register_next_step_handler(message, get_country)
+
+def get_country(message):
+    user_id = message.from_user.id
+    user_data[user_id]["country"] = message.text
+
+    bot.send_message(message.chat.id, "Entre ton numéro WhatsApp (ex : +22507000000)")
+    bot.register_next_step_handler(message, get_whatsapp)
+
+def get_whatsapp(message):
+    number = message.text
+    user_id = message.from_user.id
+
+    if not is_valid_number(number):
+        bot.send_message(message.chat.id, "❌ Numéro invalide. Réessaye.")
+        return bot.register_next_step_handler(message, get_whatsapp)
+
+    user_data[user_id]["whatsapp"] = number
+
+    platform = user_data[user_id]["platform"]
+    name = user_data[user_id]["name"]
+    country = user_data[user_id]["country"]
+
+    link = PAYMENT_LINK_TIKTOK if platform == "TikTok" else PAYMENT_LINK_FACEBOOK
+
+    group = GROUP_TIKTOK if platform == "TikTok" else GROUP_FACEBOOK
+
+    # Résumé
+    bot.send_message(
+        message.chat.id,
+        f"✅ *Récapitulatif :*\n\n"
+        f"👤 Nom : {name}\n"
+        f"🌍 Pays : {country}\n"
+        f"📱 WhatsApp : {number}\n"
+        f"🎯 Plateforme : {platform}\n\n"
+        f"💳 *Pour finaliser, clique sur le lien ci-dessous et valide le paiement :*\n{link}\n\n"
+        "Après ton paiement :\n"
+        "➡️ Tu seras automatiquement redirigé dans un groupe privé.\n"
+        "➡️ Tu verras une vidéo qui explique comment obtenir ton compte monétisé.\n"
+        "➡️ Un assistant t’aidera jusqu’à la création complète de ton compte.\n\n"
+        "⏳ *Ton compte sera prêt en moins de 30 minutes.*",
+        parse_mode="Markdown"
+    )
+
+
+# ==========================
+# BOT RUN
+# ==========================
+
+def run_bot():
+    bot.polling(none_stop=True)
+
+threading.Thread(target=run_bot).start()
