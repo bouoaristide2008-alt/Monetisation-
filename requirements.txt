@@ -1,5 +1,2 @@
-python-telegram-bot
-Flask
-requests
-urllib3
-gunicorn
+
+pyTelegramBotAPI
